@@ -1,11 +1,143 @@
+import streamlit as st
+import requests
+import random
 
-            "list": "search",
-            "srsearch": search_term,
-            "format": "json",
-            "origin": "*"
-        })
+# Supported languages and translations
+LANGUAGES = {
+    "English": "en",
+    "Hindi": "hi",
+    "Telugu": "te"
+}
+
+LABELS = {
+    "en": {
+        "welcome": "Welcome to your smart Wikipedia-powered quiz companion!",
+        "start_quiz": "▶️ Start New Quiz",
+        "question": "Question",
+        "desc": "Which topic is described below?",
+        "submit": "✅ Submit Answer",
+        "correct": "✅ Correct!",
+        "incorrect": "❌ Incorrect! Correct answer:",
+        "completed": "🎉 Quiz completed! Final Score:",
+        "restart": "🔄 Restart",
+        "choose_topic": "Choose a topic",
+        "select_difficulty": "🔥 Select Difficulty"
+    },
+    "hi": {
+        "welcome": "आपके स्मार्ट विकिपीडिया-आधारित क्विज़ साथी में आपका स्वागत है!",
+        "start_quiz": "▶️ नया क्विज़ शुरू करें",
+        "question": "प्रश्न",
+        "desc": "नीचे किस विषय का वर्णन किया गया है?",
+        "submit": "✅ उत्तर सबमिट करें",
+        "correct": "✅ सही उत्तर!",
+        "incorrect": "❌ गलत उत्तर! सही उत्तर:",
+        "completed": "🎉 क्विज़ पूरा हुआ! अंतिम स्कोर:",
+        "restart": "🔄 पुनः प्रारंभ करें",
+        "choose_topic": "एक विषय चुनें",
+        "select_difficulty": "🔥 कठिनाई स्तर चुनें"
+    },
+    "te": {
+        "welcome": "మీ స్మార్ట్ వికీపీడియా ఆధారిత క్విజ్‌కు స్వాగతం!",
+        "start_quiz": "▶️ కొత్త క్విజ్ ప్రారంభించండి",
+        "question": "ప్రశ్న",
+        "desc": "కింద పేర్కొన్నది ఏ అంశాన్ని సూచిస్తుంది?",
+        "submit": "✅ సమాధానాన్ని సమర్పించండి",
+        "correct": "✅ సరిగ్గా ఉంది!",
+        "incorrect": "❌ తప్పు! సరైన సమాధానం:",
+        "completed": "🎉 క్విజ్ పూర్తయింది! తుది స్కోరు:",
+        "restart": "🔄 మళ్లీ ప్రారంభించండి",
+        "choose_topic": "దయచేసి ఒక విషయం ఎంచుకోండి",
+        "select_difficulty": "🔥 దయచేసి కష్టతరత ఎంచుకోండి"
+    }
+}
+
+TOPICS = ["Science", "History", "Art", "Biology", "Geography", "Technology", "Mathematics", "Astronomy"]
+
+# Session state initialization
+if "quiz_started" not in st.session_state:
+    st.session_state.quiz_started = False
+if "score" not in st.session_state:
+    st.session_state.score = 0
+if "current_q" not in st.session_state:
+    st.session_state.current_q = 0
+if "question_bank" not in st.session_state:
+    st.session_state.question_bank = []
+if "selected_topic" not in st.session_state:
+    st.session_state.selected_topic = ""
+if "selected_lang" not in st.session_state:
+    st.session_state.selected_lang = "en"
+if "difficulty" not in st.session_state:
+    st.session_state.difficulty = "Medium"
+
+# Page setup
+st.set_page_config(page_title="WikiWhiz Quizipedia", layout="centered")
+
+# Sidebar
+lang_ui = st.sidebar.selectbox("🌐 Choose Language / भाषा / భాష", list(LANGUAGES.keys()))
+lang = LANGUAGES[lang_ui]
+labels = LABELS[lang]
+st.session_state.selected_lang = lang
+
+# Header
+st.image("https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo.png", width=70)
+st.markdown("<h1 style='text-align: center;'>🧠 WikiWhiz – Quizipedia</h1>", unsafe_allow_html=True)
+st.markdown(f"<p style='text-align: center;'>{labels['welcome']}</p>", unsafe_allow_html=True)
+st.markdown("---")
+
+# Selection (Before Quiz Starts)
+if not st.session_state.quiz_started:
+    with st.container():
+        st.session_state.difficulty = st.select_slider(
+            f"🔥 {labels['select_difficulty']}",
+            options=["Easy", "Medium", "Hard"],
+            value="Medium"
+        )
+        selected_topic = st.selectbox(f"🎯 {labels['choose_topic']}", TOPICS)
+        st.session_state.selected_topic = selected_topic
+
+# Wikipedia extract fetcher
+def fetch_extract(topic):
+    try:
+        response = requests.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "format": "json",
+                "prop": "extracts",
+                "exintro": True,
+                "explaintext": True,
+                "titles": topic,
+                "origin": "*"
+            }
+        )
+        pages = response.json().get("query", {}).get("pages", {})
+        page = next(iter(pages.values()))
+        return page.get("extract", "")
+    except Exception:
+        return ""
+
+# Generate question bank
+def generate_question_bank(base_topic, n=5, difficulty="Medium"):
+    search_results = []
+    try:
+        search_term = base_topic
+        if difficulty == "Easy":
+            search_term += " basics"
+        elif difficulty == "Hard":
+            search_term += " advanced"
+
+        resp = requests.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": search_term,
+                "format": "json",
+                "origin": "*"
+            }
+        )
         results = resp.json().get("query", {}).get("search", [])
-        search_results = [res['title'] for res in results][:n*3]
+        search_results = [res['title'] for res in results][:n * 3]
     except Exception:
         pass
 
@@ -85,3 +217,4 @@ if st.button(labels["start_quiz"]) or st.session_state.quiz_started:
                 st.rerun()
         with col2:
             st.markdown(f"[📘 Learn more on Wikipedia](https://en.wikipedia.org/wiki/{st.session_state.selected_topic})")
+
