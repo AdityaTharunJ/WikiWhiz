@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import random
+from transformers import T5Tokenizer, T5ForConditionalGeneration, pipeline
 
 # Supported languages and translations
 LANGUAGES = {
@@ -53,7 +54,7 @@ LABELS = {
 
 TOPICS = ["Science", "History", "Art", "Biology", "Geography", "Technology", "Mathematics", "Astronomy"]
 
-# Session state initialization
+# Initialize session state
 if "quiz_started" not in st.session_state:
     st.session_state.quiz_started = False
 if "score" not in st.session_state:
@@ -68,6 +69,17 @@ if "selected_lang" not in st.session_state:
     st.session_state.selected_lang = "en"
 if "difficulty" not in st.session_state:
     st.session_state.difficulty = "Medium"
+if "num_questions" not in st.session_state:
+    st.session_state.num_questions = 5
+
+# Load question generation pipeline
+@st.cache_resource
+def load_qg_model():
+    tokenizer = T5Tokenizer.from_pretrained("iarfmoose/t5-base-question-generator", use_fast=False)
+    model = T5ForConditionalGeneration.from_pretrained("iarfmoose/t5-base-question-generator")
+    return pipeline("text2text-generation", model=model, tokenizer=tokenizer)
+
+qg_pipeline = load_qg_model()
 
 # Page setup
 st.set_page_config(page_title="WikiWhiz Quizipedia", layout="centered")
@@ -95,6 +107,9 @@ if not st.session_state.quiz_started:
         selected_topic = st.selectbox(f"🎯 {labels['choose_topic']}", TOPICS)
         st.session_state.selected_topic = selected_topic
 
+        num_questions = st.slider("📝 Number of Questions", min_value=5, max_value=20, value=5)
+        st.session_state.num_questions = num_questions
+
 # Wikipedia extract fetcher
 def fetch_extract(topic):
     try:
@@ -116,7 +131,7 @@ def fetch_extract(topic):
     except Exception:
         return ""
 
-# Generate question bank
+# Generate question bank using QG model
 def generate_question_bank(base_topic, n=5, difficulty="Medium"):
     search_results = []
     try:
@@ -150,13 +165,20 @@ def generate_question_bank(base_topic, n=5, difficulty="Medium"):
         if extract and len(extract) > 100:
             if difficulty == "Hard" and len(extract) < 500:
                 continue
+            try:
+                generated = qg_pipeline(f"generate question: {extract}", max_length=64, do_sample=False)[0]['generated_text']
+            except Exception:
+                continue
+
             wrong_choices = [t for t in TOPICS if t != title]
             options = random.sample(wrong_choices, 3) + [title]
             random.shuffle(options)
+
             questions.append({
-                "extract": extract[:400] + "...",
+                "question": generated,
                 "answer": title,
-                "options": options
+                "options": options,
+                "context": extract[:400] + "..."
             })
             used_titles.add(title)
     return questions
@@ -166,7 +188,7 @@ if st.button(labels["start_quiz"]) or st.session_state.quiz_started:
     if not st.session_state.quiz_started:
         questions = generate_question_bank(
             st.session_state.selected_topic,
-            n=5,
+            n=st.session_state.num_questions,
             difficulty=st.session_state.difficulty
         )
         st.session_state.question_bank = questions
@@ -177,7 +199,6 @@ if st.button(labels["start_quiz"]) or st.session_state.quiz_started:
     questions = st.session_state.question_bank
     q_index = st.session_state.current_q
 
-    # Show quiz
     if q_index < len(questions):
         q = questions[q_index]
 
@@ -188,8 +209,9 @@ if st.button(labels["start_quiz"]) or st.session_state.quiz_started:
         st.progress((q_index + 1) / len(questions))
 
         st.markdown(f"### {labels['question']} {q_index + 1}")
-        st.markdown(f"💡 *{labels['desc']}*")
-        st.info(q["extract"])
+        st.markdown(f"💡 *{q['question']}*")
+        st.caption("📚 Based on Wikipedia context:")
+        st.info(q["context"])
 
         selected = st.radio("🔘 Choose your answer:", q["options"], key=q_index)
 
@@ -202,7 +224,6 @@ if st.button(labels["start_quiz"]) or st.session_state.quiz_started:
             st.session_state.current_q += 1
             st.rerun()
 
-    # Quiz complete
     else:
         st.balloons()
         st.success(f"{labels['completed']} *{st.session_state.score} / {len(questions)}*")
